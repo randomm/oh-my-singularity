@@ -90,7 +90,12 @@ export function lifecycleFg(status: string): string {
 
 const ESC = "\x1b";
 
-function ansiSequenceEnd(text: string, start: number): number {
+/**
+ * Returns the position after an ANSI escape sequence at the given start index,
+ * or -1 if the character at start is not the beginning of an escape sequence.
+ * Handles CSI (cursor/color), OSC (hyperlinks), DCS/PM/APC, and C1 CSI sequences.
+ */
+export function ansiSequenceEnd(text: string, start: number): number {
 	const first = text[start];
 	if (first === ESC) {
 		const second = text[start + 1];
@@ -180,7 +185,17 @@ function isFullWidthCodePoint(codePoint: number): boolean {
 	);
 }
 
-function codePointDisplayWidth(codePoint: number): number {
+/**
+ * Display width of a single Unicode code point in terminal columns.
+ * Returns 0 for control characters, combining marks, zero-width joiners, and variation selectors.
+ * Returns 2 for full-width characters (CJK, emoji).
+ * Returns 1 for all other characters (ASCII, most scripts).
+ * Surrogate code points (0xD800-0xDFFF) return 0 (they should not appear in valid strings).
+ */
+export function codePointDisplayWidth(codePoint: number): number {
+	// Validate input: only valid Unicode code points (0x0 - 0x10FFFF)
+	// Reject surrogates which are not valid code points for string representation
+	if (codePoint < 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return 0;
 	if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) return 0;
 	if (codePoint === 0x200d) return 0; // ZWJ
 	if (codePoint >= 0xfe00 && codePoint <= 0xfe0f) return 0; // variation selectors

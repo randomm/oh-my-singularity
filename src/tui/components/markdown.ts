@@ -1,6 +1,6 @@
 import { marked, type Token } from "marked";
 import { UI_MARKDOWN_CACHE_LIMIT } from "../../config/constants";
-import { BOLD, BOX, FG, RESET_FG, UNBOLD, visibleWidth } from "../colors";
+import { ansiSequenceEnd, BOLD, BOX, codePointDisplayWidth, FG, RESET_FG, UNBOLD, visibleWidth } from "../colors";
 
 const ITALIC = "\x1b[3m";
 const UNITALIC = "\x1b[23m";
@@ -40,10 +40,59 @@ type MarkdownTableToken = MarkdownToken & {
 	rows?: MarkdownTableCell[][];
 };
 
+/**
+ * Wrap an ANSI-colored line at a specified display width (hard wrap).
+ * Preserves ANSI escape sequences and handles multi-byte characters correctly.
+ * Single characters may exceed the specified width (hard wrap semantics).
+ * Incomplete ANSI sequences (e.g., line ending with ESC but no final byte) are preserved verbatim.
+ */
 function wrapAnsiLine(line: string, width: number): string[] {
 	if (width <= 0) return [];
 	if (!line) return [""];
-	return Bun.wrapAnsi(line, width, { hard: true }).split("\n");
+	if (typeof Bun.wrapAnsi === "function") {
+		try {
+			return Bun.wrapAnsi(line, width, { hard: true }).split("\n");
+		} catch {
+			// Fall through to fallback if Bun.wrapAnsi throws
+		}
+	}
+	// Fallback: code-point-aware hard wrap using ansiSequenceEnd and codePointDisplayWidth
+	const result: string[] = [];
+	let current = "";
+	let currentWidth = 0;
+	let i = 0;
+	while (i < line.length) {
+		// Check for ANSI escape sequence using the same logic as visibleWidth.
+		// ansiSequenceEnd returns -1 if character at i is not an escape, or the
+		// position after the escape sequence if it is one.
+		const ansiEnd = ansiSequenceEnd(line, i);
+		if (ansiEnd > i) {
+			// Preserve the original bytes of the ANSI sequence (may be incomplete).
+			current += line.slice(i, ansiEnd);
+			i = ansiEnd;
+			continue;
+		}
+		// Get next code point (handles multi-byte UTF-16 correctly).
+		const codePoint = line.codePointAt(i);
+		if (codePoint === undefined) break;
+		// Measure display width directly from code point (O(1) lookup).
+		// Width 0: control chars, combining marks, ZWJ
+		// Width 1: ASCII, most scripts
+		// Width 2: CJK, emoji
+		const charWidth = codePointDisplayWidth(codePoint);
+		if (currentWidth + charWidth > width && current.length > 0) {
+			result.push(current);
+			current = "";
+			currentWidth = 0;
+		}
+		// Preserve the original bytes from the source string (not reconstructed).
+		const charSize = codePoint > 0xffff ? 2 : 1;
+		current += line.slice(i, i + charSize);
+		currentWidth += charWidth;
+		i += charSize;
+	}
+	if (current) result.push(current);
+	return result.length > 0 ? result : [""];
 }
 
 function wrapAnsiText(text: string, width: number): string[] {
